@@ -1,0 +1,118 @@
+.io-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+.tool-group {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.io-panel .tool-group + .tool-group {
+  padding-top: 2px;
+}
+
+.io-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 140px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.io-panel button {
+  border: 1px solid var(--border);
+  background: #f6efe7;
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.io-panel button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
+}
+
+.io-panel button:active {
+  transform: translateY(0);
+}
+
+[data-theme="dark"] .io-panel button {
+  background: #26221e;
+}
+
+.io-panel textarea {
+  width: 100%;
+  min-height: 132px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  padding: 11px 12px;
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  background: rgba(255, 255, 255, 0.42);
+  color: var(--ink);
+}
+
+.io-panel select,
+.io-panel input[type="text"] {
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.42);
+  color: var(--ink);
+}
+
+.io-panel select:focus,
+.io-panel input[type="text"]:focus,
+.io-panel textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(212, 90, 62, 0.12);
+}
+
+[data-theme="dark"] .io-panel select,
+[data-theme="dark"] .io-panel input[type="text"],
+[data-theme="dark"] .io-panel textarea {
+  background: rgba(22, 20, 18, 0.75);
+}
+
+.status-message {
+  font-size: 12px;
+  color: var(--accent-2);
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(45, 106, 124, 0.12);
+  border: 1px solid rgba(45, 106, 124, 0.18);
+}
+
+@media (max-width: 860px) {
+  .tool-group {
+    align-items: stretch;
+  }
+
+  .io-panel label {
+    min-width: unset;
+    width: 100%;
+  }
+
+  .io-panel select,
+  .io-panel input[type="text"] {
+    width: 100%;
+  }
+}

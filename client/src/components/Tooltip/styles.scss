@@ -1,0 +1,50 @@
+.tooltip-anchor {
+  display: inline-flex;
+}
+
+.tooltip-bubble {
+  position: fixed;
+  background: rgba(31, 27, 22, 0.92);
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 50;
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.2);
+}
+
+.tooltip-bubble::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  transform: rotate(45deg);
+}
+
+.tooltip-bubble[data-placement="right"]::after {
+  left: -4px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.tooltip-bubble[data-placement="left"]::after {
+  right: -4px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.tooltip-bubble[data-placement="bottom"]::after {
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.tooltip-bubble[data-placement="top"]::after {
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+}

@@ -1,0 +1,53 @@
+:root {
+  --bg: #f4efe9;
+  --ink: #1f1b16;
+  --wall: #1f1b16;
+  --accent: #d45a3e;
+  --accent-2: #2d6a7c;
+  --panel: #ffffff;
+  --grid: rgba(0, 0, 0, 0.08);
+  --muted: #6b645d;
+  --shadow: 0 18px 45px rgba(0, 0, 0, 0.12);
+  --radius: 16px;
+  --surface: #fffdfa;
+  --border: #eadfd2;
+  --panel-alpha: rgba(255, 255, 255, 0.95);
+}
+
+[data-theme="dark"] {
+  --bg: #0b0a09;
+  --ink: #f4ede6;
+  --wall: #2f2a25;
+  --accent: #e57d62;
+  --accent-2: #77a6b6;
+  --panel: #1c1a17;
+  --grid: rgba(255, 255, 255, 0.05);
+  --muted: #b0a69d;
+  --shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+  --surface: #161412;
+  --border: #2c2823;
+  --panel-alpha: rgba(28, 26, 23, 0.95);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  background: radial-gradient(circle at top, #fff9f2, var(--bg));
+  color: var(--ink);
+  overflow: hidden;
+}
+
+[data-theme="dark"] body {
+  background: radial-gradient(circle at top, #1f1c19, var(--bg));
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}

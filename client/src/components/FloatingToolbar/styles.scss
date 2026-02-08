@@ -1,0 +1,121 @@
+.floating-toolbar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel-alpha);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  z-index: 3;
+  max-width: calc(100% - 32px);
+}
+
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.icon-btn {
+  border: none;
+  background: #efe6dc;
+  color: var(--ink);
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+[data-theme="dark"] .icon-btn {
+  background: #2a2520;
+}
+
+.icon-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+.icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  transform: none;
+  box-shadow: none;
+}
+
+.icon-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.icon-btn.danger {
+  background: #302c28;
+  color: #fff;
+}
+
+.icon-img {
+  width: 18px;
+  height: 18px;
+}
+
+[data-theme="dark"] .icon-img {
+  filter: brightness(0) saturate(100%) invert(1);
+}
+
+.divider {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.tool-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f6efe7;
+  padding: 6px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+[data-theme="dark"] .tool-input {
+  background: #27231f;
+}
+
+.tool-input span {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.tool-input input {
+  width: 68px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid #d2c8be;
+  font-size: 12px;
+  background: transparent;
+  color: var(--ink);
+}
+
+.tool-toggle {
+  background: #f6efe7;
+  padding: 6px 10px;
+  border-radius: 12px;
+}
+
+[data-theme="dark"] .tool-toggle {
+  background: #27231f;
+}

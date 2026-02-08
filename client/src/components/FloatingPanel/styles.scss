@@ -1,0 +1,95 @@
+.floating-panel {
+  position: absolute;
+  background: var(--panel-alpha);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(8px);
+  z-index: 2;
+  max-width: 360px;
+  user-select: none;
+}
+
+.floating-panel.collapsed {
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+[data-theme="dark"] .floating-panel.collapsed {
+  background: rgba(24, 22, 20, 0.7);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  cursor: grab;
+}
+
+.panel-header:active {
+  cursor: grabbing;
+}
+
+.panel-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+[data-theme="dark"] .panel-icon {
+  background: rgba(30, 27, 24, 0.9);
+}
+
+.panel-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.panel-action {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+[data-theme="dark"] .panel-action {
+  background: rgba(30, 27, 24, 0.9);
+}
+
+.panel-action svg {
+  width: 16px;
+  height: 16px;
+}
+
+.floating-panel input,
+.floating-panel textarea {
+  user-select: text;
+}
