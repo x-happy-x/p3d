@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, type SetStateAction } from "react";
 
 import { LAST_TEMPLATE_NAME_STORAGE_KEY, listTemplates, loadTemplate } from "./api/templates";
 import CanvasPlanner from "./components/CanvasPlanner";
@@ -9,6 +9,7 @@ import HistoryPanel from "./components/HistoryPanel";
 import MainSidePanelContent from "./components/MainSidePanelContent";
 import SidePanel from "./components/SidePanel";
 import TemplatePanel from "./components/TemplatePanel";
+import { EDITOR_DEFAULTS, EDITOR_LIMITS, HISTORY_CONFIG } from "./config/editorConfig";
 import { useDockLayout } from "./hooks/useDockLayout";
 import { useHistory } from "./hooks/useHistory";
 import {
@@ -20,9 +21,11 @@ import {
   type SideSectionId,
   type UiPrefs,
 } from "./hooks/useUiPrefs";
-import { getRoomArea, offsetPolygon, polygonArea } from "./utils/geometry";
+import { distance, getRoomArea } from "./utils/geometry";
+import { buildWallEdgeMap, getInnerLengthByWallId, getRoomInnerArea } from "./utils/planMetrics";
 import { buildRoomsFromWalls } from "./utils/rooms";
 import { normalizeImportData } from "./utils/serialization";
+
 import type { ContextMenuState, NodePoint, Room, Selection, Vec2, ViewState, Wall } from "./types/plan";
 import "./App.scss";
 
@@ -92,12 +95,121 @@ type HistoryState = {
   selection: Selection;
 };
 
-const MIN_WALL_LENGTH = 0.01;
-const MAX_WALL_LENGTH = 100;
-const MIN_WALL_WIDTH = 0.01;
-const MAX_WALL_WIDTH = 1;
-const MAX_HISTORY = 100;
-const HISTORY_MERGE_MS = 600;
+type CorePlanState = {
+  nodes: NodePoint[];
+  walls: Wall[];
+  roomNames: Record<string, string>;
+  defaultWallThickness: number;
+  scale: number;
+  grid: number;
+  snapEnabled: boolean;
+  selection: Selection;
+};
+
+type ImportPayload = {
+  scale: number;
+  grid: number;
+  wallThickness: number;
+  nodes: NodePoint[];
+  walls: Wall[];
+};
+
+type CorePlanAction =
+  | { type: "set_nodes"; payload: SetStateAction<NodePoint[]> }
+  | { type: "set_walls"; payload: SetStateAction<Wall[]> }
+  | { type: "set_room_names"; payload: SetStateAction<Record<string, string>> }
+  | { type: "set_default_wall_thickness"; payload: SetStateAction<number> }
+  | { type: "set_scale"; payload: SetStateAction<number> }
+  | { type: "set_grid"; payload: SetStateAction<number> }
+  | { type: "set_snap_enabled"; payload: SetStateAction<boolean> }
+  | { type: "set_selection"; payload: SetStateAction<Selection> }
+  | { type: "apply_snapshot"; payload: HistoryState }
+  | { type: "apply_import"; payload: ImportPayload }
+  | { type: "clear_plan" };
+
+const CORE_PLAN_INITIAL_STATE: CorePlanState = {
+  nodes: [],
+  walls: [],
+  roomNames: {},
+  defaultWallThickness: EDITOR_DEFAULTS.wallThickness,
+  scale: EDITOR_DEFAULTS.scale,
+  grid: EDITOR_DEFAULTS.grid,
+  snapEnabled: true,
+  selection: { nodes: [], walls: [], rooms: [] },
+};
+
+const corePlanActions = {
+  setNodes: (payload: SetStateAction<NodePoint[]>): CorePlanAction => ({ type: "set_nodes", payload }),
+  setWalls: (payload: SetStateAction<Wall[]>): CorePlanAction => ({ type: "set_walls", payload }),
+  setRoomNames: (payload: SetStateAction<Record<string, string>>): CorePlanAction => ({ type: "set_room_names", payload }),
+  setDefaultWallThickness: (payload: SetStateAction<number>): CorePlanAction => ({ type: "set_default_wall_thickness", payload }),
+  setScale: (payload: SetStateAction<number>): CorePlanAction => ({ type: "set_scale", payload }),
+  setGrid: (payload: SetStateAction<number>): CorePlanAction => ({ type: "set_grid", payload }),
+  setSnapEnabled: (payload: SetStateAction<boolean>): CorePlanAction => ({ type: "set_snap_enabled", payload }),
+  setSelection: (payload: SetStateAction<Selection>): CorePlanAction => ({ type: "set_selection", payload }),
+  applySnapshot: (payload: HistoryState): CorePlanAction => ({ type: "apply_snapshot", payload }),
+  applyImport: (payload: ImportPayload): CorePlanAction => ({ type: "apply_import", payload }),
+  clearPlan: (): CorePlanAction => ({ type: "clear_plan" }),
+};
+
+function resolveStateAction<T>(current: T, next: SetStateAction<T>) {
+  return typeof next === "function" ? (next as (prev: T) => T)(current) : next;
+}
+
+function corePlanReducer(state: CorePlanState, action: CorePlanAction): CorePlanState {
+  switch (action.type) {
+    case "set_nodes":
+      return { ...state, nodes: resolveStateAction(state.nodes, action.payload) };
+    case "set_walls":
+      return { ...state, walls: resolveStateAction(state.walls, action.payload) };
+    case "set_room_names":
+      return { ...state, roomNames: resolveStateAction(state.roomNames, action.payload) };
+    case "set_default_wall_thickness":
+      return {
+        ...state,
+        defaultWallThickness: resolveStateAction(state.defaultWallThickness, action.payload),
+      };
+    case "set_scale":
+      return { ...state, scale: resolveStateAction(state.scale, action.payload) };
+    case "set_grid":
+      return { ...state, grid: resolveStateAction(state.grid, action.payload) };
+    case "set_snap_enabled":
+      return { ...state, snapEnabled: resolveStateAction(state.snapEnabled, action.payload) };
+    case "set_selection":
+      return { ...state, selection: resolveStateAction(state.selection, action.payload) };
+    case "apply_snapshot":
+      return {
+        ...state,
+        nodes: action.payload.nodes,
+        walls: action.payload.walls,
+        roomNames: action.payload.roomNames,
+        defaultWallThickness: action.payload.defaultWallThickness,
+        scale: action.payload.scale,
+        grid: action.payload.grid,
+        snapEnabled: action.payload.snapEnabled,
+        selection: action.payload.selection,
+      };
+    case "apply_import":
+      return {
+        ...state,
+        scale: action.payload.scale,
+        grid: action.payload.grid,
+        defaultWallThickness: action.payload.wallThickness,
+        nodes: action.payload.nodes,
+        walls: action.payload.walls,
+        selection: { nodes: [], walls: [], rooms: [] },
+      };
+    case "clear_plan":
+      return {
+        ...state,
+        nodes: [],
+        walls: [],
+        selection: { nodes: [], walls: [], rooms: [] },
+      };
+    default:
+      return state;
+  }
+}
 
 const clampValue = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -115,17 +227,47 @@ const getRoomKey = (cycle: number[]) => {
 
 export default function App() {
   const uiPrefs = useUiPrefs();
+  const [corePlan, dispatchCorePlan] = useReducer(corePlanReducer, CORE_PLAN_INITIAL_STATE);
+  const {
+    nodes,
+    walls,
+    selection,
+    scale,
+    grid,
+    snapEnabled,
+    roomNames,
+    defaultWallThickness,
+  } = corePlan;
+
+  const setNodes = useCallback((next: SetStateAction<NodePoint[]>) => {
+    dispatchCorePlan(corePlanActions.setNodes(next));
+  }, []);
+  const setWalls = useCallback((next: SetStateAction<Wall[]>) => {
+    dispatchCorePlan(corePlanActions.setWalls(next));
+  }, []);
+  const setSelection = useCallback((next: SetStateAction<Selection>) => {
+    dispatchCorePlan(corePlanActions.setSelection(next));
+  }, []);
+  const setRoomNames = useCallback((next: SetStateAction<Record<string, string>>) => {
+    dispatchCorePlan(corePlanActions.setRoomNames(next));
+  }, []);
+  const setDefaultWallThickness = useCallback((next: SetStateAction<number>) => {
+    dispatchCorePlan(corePlanActions.setDefaultWallThickness(next));
+  }, []);
+  const setScale = useCallback((next: SetStateAction<number>) => {
+    dispatchCorePlan(corePlanActions.setScale(next));
+  }, []);
+  const setGrid = useCallback((next: SetStateAction<number>) => {
+    dispatchCorePlan(corePlanActions.setGrid(next));
+  }, []);
+  const setSnapEnabled = useCallback((next: SetStateAction<boolean>) => {
+    dispatchCorePlan(corePlanActions.setSnapEnabled(next));
+  }, []);
 
   const [mode, setMode] = useState<"draw" | "select" | "edit" | "pan">(uiPrefs.mode ?? "draw");
   const [theme, setTheme] = useState<"light" | "dark">(uiPrefs.theme ?? "light");
-  const [nodes, setNodes] = useState<NodePoint[]>([]);
-  const [walls, setWalls] = useState<Wall[]>([]);
-  const [selection, setSelection] = useState<Selection>({ nodes: [], walls: [], rooms: [] });
   const [hoveredWallId, setHoveredWallId] = useState<number | null>(null);
   const [lastSelectedWallId, setLastSelectedWallId] = useState<number | null>(null);
-  const [scale, setScale] = useState(50);
-  const [grid, setGrid] = useState(0.5);
-  const [snapEnabled, setSnapEnabled] = useState(true);
   const [soloView, setSoloView] = useState(uiPrefs.soloView ?? false);
   const [showRoomNames, setShowRoomNames] = useState(uiPrefs.showRoomNames ?? true);
   const [showRoomSizes, setShowRoomSizes] = useState(uiPrefs.showRoomSizes ?? true);
@@ -140,17 +282,12 @@ export default function App() {
   const [expandedOrphans, setExpandedOrphans] = useState(uiPrefs.expandedOrphans ?? false);
   const [editingRoomId, setEditingRoomId] = useState<number | null>(null);
   const [roomNameDraft, setRoomNameDraft] = useState("");
-  const [roomNames, setRoomNames] = useState<Record<string, string>>({});
-  const [defaultWallThickness, setDefaultWallThickness] = useState(0.2);
-  const [view, setView] = useState<ViewState>({ zoom: 1, offset: { x: 40, y: 40 } });
-  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0, hit: null });
-  const [menuInputs, setMenuInputs] = useState<MenuInputs>(uiPrefs.lastMenuInputs ?? {
-    distance: 3,
-    angle: 90,
-    length: 3,
-    thickness: 0.2,
-    scale: 1.2,
+  const [view, setView] = useState<ViewState>({
+    zoom: EDITOR_DEFAULTS.zoom,
+    offset: { ...EDITOR_DEFAULTS.viewOffset },
   });
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0, hit: null });
+  const [menuInputs, setMenuInputs] = useState<MenuInputs>(uiPrefs.lastMenuInputs ?? EDITOR_DEFAULTS.menuInputs);
 
   const {
     panelSizes,
@@ -206,14 +343,7 @@ export default function App() {
   }), [nodes, walls, roomNames, defaultWallThickness, scale, grid, snapEnabled, selection]);
 
   const applySnapshot = useCallback((snapshot: HistoryState) => {
-    setNodes(snapshot.nodes);
-    setWalls(snapshot.walls);
-    setRoomNames(snapshot.roomNames);
-    setDefaultWallThickness(snapshot.defaultWallThickness);
-    setScale(snapshot.scale);
-    setGrid(snapshot.grid);
-    setSnapEnabled(snapshot.snapEnabled);
-    setSelection(snapshot.selection);
+    dispatchCorePlan(corePlanActions.applySnapshot(snapshot));
     nodeIdRef.current = snapshot.nodes.reduce((max, node) => Math.max(max, node.id), 0) + 1;
     wallIdRef.current = snapshot.walls.reduce((max, wall) => Math.max(max, wall.id), 0) + 1;
   }, []);
@@ -230,8 +360,8 @@ export default function App() {
     createSnapshot,
     applySnapshot,
     watch: [nodes, walls, roomNames, defaultWallThickness, scale, grid, snapEnabled, selection],
-    mergeMs: HISTORY_MERGE_MS,
-    maxEntries: MAX_HISTORY,
+    mergeMs: HISTORY_CONFIG.mergeMs,
+    maxEntries: HISTORY_CONFIG.maxEntries,
   });
 
   const uiPrefsPayload = useMemo<UiPrefs>(
@@ -320,36 +450,14 @@ export default function App() {
       return name ? { ...room, name } : room;
     })
   ), [nodes, walls, roomNames]);
+  const wallEdgeMap = useMemo(() => buildWallEdgeMap(walls), [walls]);
   const roomAreaById = useMemo(() => {
-    const edgeMap = new Map<string, Wall[]>();
-    walls.forEach((wall) => {
-      const a = Math.min(wall.a, wall.b);
-      const b = Math.max(wall.a, wall.b);
-      const key = `${a}-${b}`;
-      if (!edgeMap.has(key)) edgeMap.set(key, []);
-      edgeMap.get(key)!.push(wall);
-    });
-    edgeMap.forEach((list, key) => {
-      edgeMap.set(key, [...list].sort((a, b) => a.id - b.id));
-    });
-
     const areas: Record<number, number> = {};
     rooms.forEach((room) => {
-      const offsets = room.nodeIds.map((nodeId, index) => {
-        const nextId = room.nodeIds[(index + 1) % room.nodeIds.length];
-        const a = Math.min(nodeId, nextId);
-        const b = Math.max(nodeId, nextId);
-        const key = `${a}-${b}`;
-        const wall = (edgeMap.get(key) || [])[0];
-        const thickness = wall?.thickness ?? defaultWallThickness;
-        return (thickness * scale) / 2;
-      });
-      const inner = offsetPolygon(room.points, offsets);
-      const areaPx = inner && inner.length >= 3 ? polygonArea(inner) : polygonArea(room.points);
-      areas[room.id] = areaPx / (scale * scale);
+      areas[room.id] = getRoomInnerArea(room, wallEdgeMap, defaultWallThickness, scale);
     });
     return areas;
-  }, [rooms, walls, defaultWallThickness, scale]);
+  }, [rooms, wallEdgeMap, defaultWallThickness, scale]);
 
   const totalArea = useMemo(() => (
     rooms.reduce((sum, room) => {
@@ -361,46 +469,8 @@ export default function App() {
   ), [rooms, roomAreaById, scale, showInnerMeasurements]);
 
   const innerLengthByWallId = useMemo(() => {
-    const edgeMap = new Map<string, Wall[]>();
-    walls.forEach((wall) => {
-      const a = Math.min(wall.a, wall.b);
-      const b = Math.max(wall.a, wall.b);
-      const key = `${a}-${b}`;
-      if (!edgeMap.has(key)) edgeMap.set(key, []);
-      edgeMap.get(key)!.push(wall);
-    });
-    edgeMap.forEach((list, key) => {
-      edgeMap.set(key, [...list].sort((a, b) => a.id - b.id));
-    });
-
-    const map = new Map<number, number>();
-    rooms.forEach((room) => {
-      const offsets = room.nodeIds.map((nodeId, index) => {
-        const nextId = room.nodeIds[(index + 1) % room.nodeIds.length];
-        const a = Math.min(nodeId, nextId);
-        const b = Math.max(nodeId, nextId);
-        const key = `${a}-${b}`;
-        const wall = (edgeMap.get(key) || [])[0];
-        const thickness = wall?.thickness ?? defaultWallThickness;
-        return (thickness * scale) / 2;
-      });
-      const inner = offsetPolygon(room.points, offsets);
-      if (!inner || inner.length !== room.points.length) return;
-      for (let i = 0; i < inner.length; i += 1) {
-        const nodeId = room.nodeIds[i];
-        const nextId = room.nodeIds[(i + 1) % room.nodeIds.length];
-        const a = Math.min(nodeId, nextId);
-        const b = Math.max(nodeId, nextId);
-        const key = `${a}-${b}`;
-        const wall = (edgeMap.get(key) || [])[0];
-        if (!wall) continue;
-        const length = distance(inner[i], inner[(i + 1) % inner.length]) / scale;
-        const existing = map.get(wall.id);
-        map.set(wall.id, existing ? Math.min(existing, length) : length);
-      }
-    });
-    return map;
-  }, [rooms, walls, defaultWallThickness, scale]);
+    return getInnerLengthByWallId(rooms, wallEdgeMap, defaultWallThickness, scale);
+  }, [rooms, wallEdgeMap, defaultWallThickness, scale]);
 
   const getWallLengthMeters = useCallback((wall: Wall) => {
     const nodeA = nodes.find((node) => node.id === wall.a);
@@ -493,14 +563,12 @@ export default function App() {
 
   const handleClear = () => {
     recordHistory(`Очистка: ${nodes.length} точек, ${walls.length} стен → 0`);
-    setNodes([]);
-    setWalls([]);
-    setSelection({ nodes: [], walls: [], rooms: [] });
+    dispatchCorePlan(corePlanActions.clearPlan());
     nodeIdRef.current = 1;
     wallIdRef.current = 1;
   };
 
-  const handleApplyImport = (data: {
+  const handleApplyImport = useCallback((data: {
     scale: number;
     grid: number;
     wallThickness: number;
@@ -508,19 +576,25 @@ export default function App() {
     walls: Wall[];
   }) => {
     recordHistory(`Импорт: ${nodes.length}→${data.nodes?.length ?? 0} точек, ${walls.length}→${data.walls?.length ?? 0} стен`);
-    const fallbackThickness = clampValue(data.wallThickness ?? 0.2, MIN_WALL_WIDTH, MAX_WALL_WIDTH);
-    setScale(data.scale);
-    setGrid(data.grid);
-    setDefaultWallThickness(fallbackThickness);
-    setNodes(data.nodes || []);
-    setWalls((data.walls || []).map((wall) => ({
+    const fallbackThickness = clampValue(
+      data.wallThickness ?? EDITOR_DEFAULTS.wallThickness,
+      EDITOR_LIMITS.wallThickness.min,
+      EDITOR_LIMITS.wallThickness.max
+    );
+    const nextWalls = (data.walls || []).map((wall) => ({
       ...wall,
-      thickness: clampValue(wall.thickness ?? fallbackThickness, MIN_WALL_WIDTH, MAX_WALL_WIDTH),
-    })));
-    setSelection({ nodes: [], walls: [], rooms: [] });
+      thickness: clampValue(wall.thickness ?? fallbackThickness, EDITOR_LIMITS.wallThickness.min, EDITOR_LIMITS.wallThickness.max),
+    }));
+    dispatchCorePlan(corePlanActions.applyImport({
+      scale: data.scale,
+      grid: data.grid,
+      wallThickness: fallbackThickness,
+      nodes: data.nodes || [],
+      walls: nextWalls,
+    }));
     nodeIdRef.current = (data.nodes || []).reduce((max, node) => Math.max(max, node.id), 0) + 1;
-    wallIdRef.current = (data.walls || []).reduce((max, wall) => Math.max(max, wall.id), 0) + 1;
-  };
+    wallIdRef.current = nextWalls.reduce((max, wall) => Math.max(max, wall.id), 0) + 1;
+  }, [nodes.length, recordHistory, walls.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -549,15 +623,15 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [handleApplyImport]);
 
   const handleZoomChange = (nextZoom: number) => {
-    const clamped = Math.min(4, Math.max(0.2, Number(nextZoom)));
+    const clamped = clampValue(Number(nextZoom), EDITOR_LIMITS.zoom.min, EDITOR_LIMITS.zoom.max);
     setView((prev) => ({ ...prev, zoom: clamped }));
   };
 
   const handleZoomReset = () => {
-    setView((prev) => ({ ...prev, zoom: 1, offset: { x: 40, y: 40 } }));
+    setView((prev) => ({ ...prev, zoom: EDITOR_DEFAULTS.zoom, offset: { ...EDITOR_DEFAULTS.viewOffset } }));
   };
 
   const handleResetLayout = () => {
@@ -649,7 +723,7 @@ export default function App() {
   };
 
   const handleWallLengthChange = (wallId: number, lengthMeters: number) => {
-    const clamped = clampValue(lengthMeters, MIN_WALL_LENGTH, MAX_WALL_LENGTH);
+    const clamped = clampValue(lengthMeters, EDITOR_LIMITS.wallLength.min, EDITOR_LIMITS.wallLength.max);
     const wall = walls.find((item) => item.id === wallId);
     if (!wall) return;
     const prevLength = getWallLengthMeters(wall);
@@ -667,7 +741,7 @@ export default function App() {
       if (innerLength !== undefined) {
         const outerLength = current / scale;
         const delta = outerLength - innerLength;
-        targetMeters = clampValue(clamped + delta, MIN_WALL_LENGTH, MAX_WALL_LENGTH);
+        targetMeters = clampValue(clamped + delta, EDITOR_LIMITS.wallLength.min, EDITOR_LIMITS.wallLength.max);
       }
     }
     const targetPx = targetMeters * scale;
@@ -679,7 +753,7 @@ export default function App() {
   };
 
   const handleWallWidthChange = (wallId: number, widthMeters: number) => {
-    const clamped = clampValue(widthMeters, MIN_WALL_WIDTH, MAX_WALL_WIDTH);
+    const clamped = clampValue(widthMeters, EDITOR_LIMITS.wallThickness.min, EDITOR_LIMITS.wallThickness.max);
     const wall = walls.find((item) => item.id === wallId);
     const prevWidth = wall?.thickness ?? defaultWallThickness;
     recordHistory(`Ширина стены ${wallId}: ${prevWidth.toFixed(2)} → ${clamped.toFixed(2)} м`);
@@ -765,11 +839,11 @@ export default function App() {
 
   const handleMenuInputChange = (key: keyof MenuInputs, value: number) => {
     if (key === "length") {
-      setMenuInputs((prev) => ({ ...prev, [key]: clampValue(value, MIN_WALL_LENGTH, MAX_WALL_LENGTH) }));
+      setMenuInputs((prev) => ({ ...prev, [key]: clampValue(value, EDITOR_LIMITS.wallLength.min, EDITOR_LIMITS.wallLength.max) }));
       return;
     }
     if (key === "thickness") {
-      setMenuInputs((prev) => ({ ...prev, [key]: clampValue(value, MIN_WALL_WIDTH, MAX_WALL_WIDTH) }));
+      setMenuInputs((prev) => ({ ...prev, [key]: clampValue(value, EDITOR_LIMITS.wallThickness.min, EDITOR_LIMITS.wallThickness.max) }));
       return;
     }
     setMenuInputs((prev) => ({ ...prev, [key]: value }));
@@ -885,14 +959,14 @@ export default function App() {
     if (!fixed || !move) return;
     const current = distance(fixed, move);
     if (current === 0) return;
-    const desired = clampValue(Number(menuInputs.length), MIN_WALL_LENGTH, MAX_WALL_LENGTH) * scale;
+    const desired = clampValue(Number(menuInputs.length), EDITOR_LIMITS.wallLength.min, EDITOR_LIMITS.wallLength.max) * scale;
     let targetPx = desired;
     if (showInnerMeasurements) {
       const innerLength = innerLengthByWallId.get(wall.id);
       if (innerLength !== undefined) {
         const outerLength = current / scale;
         const delta = outerLength - innerLength;
-        const nextMeters = clampValue(Number(menuInputs.length) + delta, MIN_WALL_LENGTH, MAX_WALL_LENGTH);
+        const nextMeters = clampValue(Number(menuInputs.length) + delta, EDITOR_LIMITS.wallLength.min, EDITOR_LIMITS.wallLength.max);
         targetPx = nextMeters * scale;
       }
     }
@@ -912,7 +986,7 @@ export default function App() {
       ? (walls.find((wall) => wall.id === selection.walls[0])?.thickness ?? defaultWallThickness)
       : Number(menuInputs.thickness);
     recordHistory(`Ширина стен: ${prevThickness.toFixed(2)} → ${Number(menuInputs.thickness).toFixed(2)} м`);
-    const thickness = clampValue(Number(menuInputs.thickness), MIN_WALL_WIDTH, MAX_WALL_WIDTH);
+    const thickness = clampValue(Number(menuInputs.thickness), EDITOR_LIMITS.wallThickness.min, EDITOR_LIMITS.wallThickness.max);
     setWalls((prev) => prev.map((wall) => (
       selection.walls.includes(wall.id) ? { ...wall, thickness } : wall
     )));
@@ -1022,6 +1096,17 @@ export default function App() {
     return new Date(time).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   };
 
+  const editActionMap = {
+    collapseNodes,
+    detachNodes,
+    setDistanceBetweenNodes,
+    splitWall,
+    setWallLength,
+    setWallThickness,
+    setAngleBetweenWalls,
+    scaleWalls,
+  } as const;
+
   return (
     <div className="canvas-shell">
       <CanvasPlanner
@@ -1074,7 +1159,7 @@ export default function App() {
             }}
             onWallThicknessChange={(value) => {
               recordHistory(`Толщина по умолчанию: ${defaultWallThickness.toFixed(2)} → ${Number(value).toFixed(2)} м`);
-              setDefaultWallThickness(clampValue(value, MIN_WALL_WIDTH, MAX_WALL_WIDTH));
+              setDefaultWallThickness(clampValue(value, EDITOR_LIMITS.wallThickness.min, EDITOR_LIMITS.wallThickness.max));
             }}
             onZoomChange={handleZoomChange}
             onZoomReset={handleZoomReset}
@@ -1218,26 +1303,20 @@ export default function App() {
               canSplit={!!(contextMenu.hit && contextMenu.hit.kind === "wall")}
               onClose={handleContextMenuClose}
               onChange={handleMenuInputChange}
-              onCollapseNodes={collapseNodes}
-              onDetachNodes={detachNodes}
-              onSetDistance={setDistanceBetweenNodes}
-              onSplitWall={splitWall}
-              onSetLength={setWallLength}
-              onSetThickness={setWallThickness}
-              onSetAngle={setAngleBetweenWalls}
-              onScaleWalls={scaleWalls}
+              onCollapseNodes={editActionMap.collapseNodes}
+              onDetachNodes={editActionMap.detachNodes}
+              onSetDistance={editActionMap.setDistanceBetweenNodes}
+              onSplitWall={editActionMap.splitWall}
+              onSetLength={editActionMap.setWallLength}
+              onSetThickness={editActionMap.setWallThickness}
+              onSetAngle={editActionMap.setAngleBetweenWalls}
+              onScaleWalls={editActionMap.scaleWalls}
             />
           </>
         )}
       />
     </div>
   );
-}
-
-function distance(a: Vec2, b: Vec2) {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.hypot(dx, dy);
 }
 
 function toggleSelection(list: number[], id: number, additive: boolean) {

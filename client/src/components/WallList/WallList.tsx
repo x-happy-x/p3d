@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { EDITOR_LIMITS } from "../../config/editorConfig";
 import type { NodePoint, Wall } from "../../types/plan";
 import "./styles.scss";
 
@@ -147,9 +148,9 @@ export default function WallList({
                   className="wall-name-input"
                   value={draftLength}
                   onChange={(event) => setDraftLength(event.target.value)}
-                  min={0.01}
-                  max={100}
-                  step={0.01}
+                  min={EDITOR_LIMITS.wallLength.min}
+                  max={EDITOR_LIMITS.wallLength.max}
+                  step={EDITOR_LIMITS.wallLength.step}
                   onBlur={commitLengthEdit}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") commitLengthEdit();
@@ -175,9 +176,9 @@ export default function WallList({
                   className="wall-name-input"
                   value={draftWidth}
                   onChange={(event) => setDraftWidth(event.target.value)}
-                  min={0.01}
-                  max={1}
-                  step={0.01}
+                  min={EDITOR_LIMITS.wallThickness.min}
+                  max={EDITOR_LIMITS.wallThickness.max}
+                  step={EDITOR_LIMITS.wallThickness.step}
                   onBlur={commitWidthEdit}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") commitWidthEdit();

@@ -1,6 +1,9 @@
-import React from "react";
+type Props = {
+  roomCount: number;
+  totalArea: number;
+};
 
-export default function StatsBar({ roomCount, totalArea }) {
+export default function StatsBar({ roomCount, totalArea }: Props) {
   return (
     <div className="stats">
       <div>

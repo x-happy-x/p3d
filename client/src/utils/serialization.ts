@@ -1,4 +1,5 @@
 import type { NodePoint, Wall } from "../types/plan";
+import { EDITOR_DEFAULTS } from "../config/editorConfig";
 
 export type ExportData = {
   scale: number;
@@ -12,6 +13,59 @@ function uniqueId(seed = 1) {
   let id = seed;
   return () => id++;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> => (
+  typeof value === "object" && value !== null
+);
+
+const asFiniteNumber = (value: unknown): number | null => {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const asNonEmptyString = (value: unknown, fallback: string) => {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return trimmed || fallback;
+};
+
+const normalizeNode = (raw: unknown, fallbackId: number): NodePoint | null => {
+  if (!isRecord(raw)) return null;
+  const id = asFiniteNumber(raw.id);
+  const x = asFiniteNumber(raw.x);
+  const y = asFiniteNumber(raw.y);
+  if (x === null || y === null) return null;
+  return {
+    id: id !== null ? Math.max(1, Math.trunc(id)) : fallbackId,
+    x,
+    y,
+  };
+};
+
+const normalizeWall = (
+  raw: unknown,
+  fallbackId: number,
+  fallbackThickness: number,
+  nodeIdSet: Set<number>
+): Wall | null => {
+  if (!isRecord(raw)) return null;
+  const id = asFiniteNumber(raw.id);
+  const a = asFiniteNumber(raw.a);
+  const b = asFiniteNumber(raw.b);
+  if (a === null || b === null) return null;
+  const nodeA = Math.max(1, Math.trunc(a));
+  const nodeB = Math.max(1, Math.trunc(b));
+  if (nodeA === nodeB || !nodeIdSet.has(nodeA) || !nodeIdSet.has(nodeB)) return null;
+
+  const thickness = asFiniteNumber(raw.thickness);
+  return {
+    id: id !== null ? Math.max(1, Math.trunc(id)) : fallbackId,
+    name: asNonEmptyString(raw.name, `Стена ${fallbackId}`),
+    a: nodeA,
+    b: nodeB,
+    thickness: thickness !== null && thickness > 0 ? thickness : fallbackThickness,
+  };
+};
 
 export function buildExportData({ nodes, walls, scale, grid, wallThickness }: ExportData) {
   return {
@@ -117,39 +171,50 @@ export function parseYaml(text: string) {
   return data as ExportData;
 }
 
-function normalizeNodesWalls(data: ExportData, fallbackThickness: number) {
-  const nodes = Array.isArray(data.nodes)
-    ? data.nodes.map((node, index) => ({
-      id: Number(node.id) || index + 1,
-      x: Number(node.x) || 0,
-      y: Number(node.y) || 0,
-    }))
-    : [];
-  const walls = Array.isArray(data.walls)
-    ? data.walls.map((wall, index) => ({
-      id: Number(wall.id) || index + 1,
-      name: wall.name || `Стена ${index + 1}`,
-      a: Number(wall.a),
-      b: Number(wall.b),
-      thickness: Number(wall.thickness) || fallbackThickness,
-    })).filter((wall) => Number.isFinite(wall.a) && Number.isFinite(wall.b))
-    : [];
+function normalizeNodesWalls(data: unknown, fallbackThickness: number) {
+  if (!isRecord(data)) return null;
+  if (!Array.isArray(data.nodes) || !Array.isArray(data.walls)) return null;
+
+  const nodes = data.nodes
+    .map((node, index) => normalizeNode(node, index + 1))
+    .filter((node): node is NodePoint => Boolean(node));
+
+  if (!nodes.length) return null;
+
+  const nodeIdSet = new Set(nodes.map((node) => node.id));
+  const walls = data.walls
+    .map((wall, index) => normalizeWall(wall, index + 1, fallbackThickness, nodeIdSet))
+    .filter((wall): wall is Wall => Boolean(wall));
+
   return { nodes, walls };
 }
 
-function buildFromRooms(rooms: { points: { x: number; y: number }[] }[], fallbackThickness: number) {
+function buildFromRooms(rooms: unknown, fallbackThickness: number) {
+  if (!Array.isArray(rooms)) return null;
   const makeId = uniqueId(1);
   const nodes: NodePoint[] = [];
   const walls: Wall[] = [];
 
   rooms.forEach((room) => {
-    const points = Array.isArray(room.points) ? room.points : [];
+    if (!isRecord(room) || !Array.isArray(room.points)) return;
+    const points = room.points
+      .map((point) => {
+        if (!isRecord(point)) return null;
+        const x = asFiniteNumber(point.x);
+        const y = asFiniteNumber(point.y);
+        if (x === null || y === null) return null;
+        return { x, y };
+      })
+      .filter((point): point is { x: number; y: number } => Boolean(point));
+
     if (points.length < 3) return;
+
     const nodeIds = points.map((point) => {
-      const node = { id: makeId(), x: Number(point.x), y: Number(point.y) };
+      const node = { id: makeId(), x: point.x, y: point.y };
       nodes.push(node);
       return node.id;
     });
+
     nodeIds.forEach((nodeId, index) => {
       const nextId = nodeIds[(index + 1) % nodeIds.length];
       walls.push({
@@ -162,30 +227,39 @@ function buildFromRooms(rooms: { points: { x: number; y: number }[] }[], fallbac
     });
   });
 
+  if (!nodes.length) return null;
   return { nodes, walls };
 }
 
-export function normalizeImportData(data: Partial<ExportData>) {
-  const fallbackThickness = Number(data.wallThickness) || 0.2;
-  if (Array.isArray(data.nodes) && Array.isArray(data.walls)) {
-    const normalized = normalizeNodesWalls(data as ExportData, fallbackThickness);
+export function normalizeImportData(data: unknown) {
+  const fallbackThicknessRaw = isRecord(data) ? asFiniteNumber(data.wallThickness) : null;
+  const fallbackThickness = fallbackThicknessRaw !== null && fallbackThicknessRaw > 0
+    ? fallbackThicknessRaw
+    : EDITOR_DEFAULTS.wallThickness;
+
+  const normalizedNodesWalls = normalizeNodesWalls(data, fallbackThickness);
+  if (normalizedNodesWalls) {
+    const scale = isRecord(data) ? asFiniteNumber(data.scale) : null;
+    const grid = isRecord(data) ? asFiniteNumber(data.grid) : null;
     return {
-      scale: Number(data.scale) || 50,
-      grid: Number(data.grid) || 0.5,
+      scale: scale !== null && scale > 0 ? scale : EDITOR_DEFAULTS.scale,
+      grid: grid !== null && grid > 0 ? grid : EDITOR_DEFAULTS.grid,
       wallThickness: fallbackThickness,
-      nodes: normalized.nodes,
-      walls: normalized.walls,
+      nodes: normalizedNodesWalls.nodes,
+      walls: normalizedNodesWalls.walls,
     };
   }
 
-  if (Array.isArray((data as { rooms?: { points: { x: number; y: number }[] }[] }).rooms)) {
-    const converted = buildFromRooms((data as { rooms: { points: { x: number; y: number }[] }[] }).rooms, fallbackThickness);
+  const roomBased = isRecord(data) ? buildFromRooms(data.rooms, fallbackThickness) : null;
+  if (roomBased) {
+    const scale = isRecord(data) ? asFiniteNumber(data.scale) : null;
+    const grid = isRecord(data) ? asFiniteNumber(data.grid) : null;
     return {
-      scale: Number(data.scale) || 50,
-      grid: Number(data.grid) || 0.5,
+      scale: scale !== null && scale > 0 ? scale : EDITOR_DEFAULTS.scale,
+      grid: grid !== null && grid > 0 ? grid : EDITOR_DEFAULTS.grid,
       wallThickness: fallbackThickness,
-      nodes: converted.nodes,
-      walls: converted.walls,
+      nodes: roomBased.nodes,
+      walls: roomBased.walls,
     };
   }
 

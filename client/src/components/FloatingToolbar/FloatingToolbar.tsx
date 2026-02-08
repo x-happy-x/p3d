@@ -5,12 +5,13 @@ import iconEdit from "../../assets/icons/edit.svg";
 import iconPan from "../../assets/icons/pan.svg";
 import iconZoomIn from "../../assets/icons/zoom-in.svg";
 import iconZoomOut from "../../assets/icons/zoom-out.svg";
-import iconReset from "../../assets/icons/reset.svg";
+import iconZoomReset from "../../assets/icons/zoom-reset.svg";
 import iconLayoutReset from "../../assets/icons/layout-reset.svg";
 import iconClear from "../../assets/icons/clear.svg";
 import iconTheme from "../../assets/icons/theme.svg";
 import iconUndo from "../../assets/icons/undo.svg";
 import iconRedo from "../../assets/icons/redo.svg";
+import { EDITOR_LIMITS } from "../../config/editorConfig";
 import Tooltip from "../Tooltip";
 import "./styles.scss";
 
@@ -104,18 +105,18 @@ export default function FloatingToolbar({
         </Tooltip>
         <div className="divider" />
         <Tooltip content="Отдалить">
-          <button className="icon-btn" onClick={() => onZoomChange(zoom - 0.1)}>
+          <button className="icon-btn" onClick={() => onZoomChange(zoom - EDITOR_LIMITS.zoom.step)}>
             <Icon src={iconZoomOut} alt="Zoom out" />
           </button>
         </Tooltip>
         <Tooltip content="Приблизить">
-          <button className="icon-btn" onClick={() => onZoomChange(zoom + 0.1)}>
+          <button className="icon-btn" onClick={() => onZoomChange(zoom + EDITOR_LIMITS.zoom.step)}>
             <Icon src={iconZoomIn} alt="Zoom in" />
           </button>
         </Tooltip>
         <Tooltip content="Сбросить зум">
           <button className="icon-btn" onClick={onZoomReset}>
-            <Icon src={iconReset} alt="Reset" />
+            <Icon src={iconZoomReset} alt="Reset" />
           </button>
         </Tooltip>
         <Tooltip content="Сбросить панели">
@@ -136,8 +137,8 @@ export default function FloatingToolbar({
             <input
               type="number"
               value={scale}
-              min={10}
-              max={200}
+              min={EDITOR_LIMITS.scale.min}
+              max={EDITOR_LIMITS.scale.max}
               onChange={(event) => onScaleChange(Number(event.target.value))}
             />
           </label>
@@ -148,8 +149,8 @@ export default function FloatingToolbar({
             <input
               type="number"
               value={grid}
-              min={0.1}
-              step={0.1}
+              min={EDITOR_LIMITS.grid.min}
+              step={EDITOR_LIMITS.grid.step}
               onChange={(event) => onGridChange(Number(event.target.value))}
             />
           </label>
@@ -160,9 +161,9 @@ export default function FloatingToolbar({
           <input
             type="number"
             value={defaultWallThickness}
-            min={0.01}
-            max={1}
-            step={0.01}
+            min={EDITOR_LIMITS.wallThickness.min}
+            max={EDITOR_LIMITS.wallThickness.max}
+            step={EDITOR_LIMITS.wallThickness.step}
             onChange={(event) => onWallThicknessChange(Number(event.target.value))}
           />
           </label>

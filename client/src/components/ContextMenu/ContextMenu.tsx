@@ -1,4 +1,5 @@
 import React from "react";
+import { EDITOR_LIMITS } from "../../config/editorConfig";
 import "./styles.scss";
 import type { Selection } from "../../types/plan";
 
@@ -76,7 +77,7 @@ export default function ContextMenu({
                 <input
                   type="number"
                   value={inputs.distance}
-                  step={0.1}
+                  step={EDITOR_LIMITS.wallLength.quickStep}
                   onChange={(event) => onChange("distance", Number(event.target.value))}
                 />
               </label>
@@ -100,9 +101,9 @@ export default function ContextMenu({
                 <input
                   type="number"
                   value={inputs.length}
-                  min={0.01}
-                  max={100}
-                  step={0.1}
+                  min={EDITOR_LIMITS.wallLength.min}
+                  max={EDITOR_LIMITS.wallLength.max}
+                  step={EDITOR_LIMITS.wallLength.quickStep}
                   onChange={(event) => onChange("length", Number(event.target.value))}
                 />
               </label>
@@ -116,9 +117,9 @@ export default function ContextMenu({
                 <input
                   type="number"
                   value={inputs.thickness}
-                  min={0.01}
-                  max={1}
-                  step={0.05}
+                  min={EDITOR_LIMITS.wallThickness.min}
+                  max={EDITOR_LIMITS.wallThickness.max}
+                  step={EDITOR_LIMITS.wallThickness.contextStep}
                   onChange={(event) => onChange("thickness", Number(event.target.value))}
                 />
               </label>

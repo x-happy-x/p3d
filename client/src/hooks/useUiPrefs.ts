@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { EDITOR_DEFAULTS, EDITOR_LIMITS } from "../config/editorConfig";
 
 export type SideSectionId = "stats" | "preview" | "view" | "objects";
 
@@ -166,7 +167,9 @@ const parseUiPrefs = (): Partial<UiPrefs> => {
       showWallsPanel: asBoolean(parsed.showWallsPanel),
       expandedRooms,
       expandedOrphans: asBoolean(parsed.expandedOrphans),
-      sidePanelWidth: sidePanelWidth !== undefined ? clampValue(sidePanelWidth, 260, 640) : undefined,
+      sidePanelWidth: sidePanelWidth !== undefined
+        ? clampValue(sidePanelWidth, EDITOR_LIMITS.sidePanelWidth.min, EDITOR_LIMITS.sidePanelWidth.max)
+        : undefined,
       sidePanelCollapsed: asBoolean(parsed.sidePanelCollapsed),
       sidePanelActive,
       sideSections,
@@ -175,11 +178,19 @@ const parseUiPrefs = (): Partial<UiPrefs> => {
       panelPositions,
       floatingPanelCollapsed,
       lastMenuInputs: {
-        distance: asNumber(menuInputsRaw.distance) ?? 3,
-        angle: asNumber(menuInputsRaw.angle) ?? 90,
-        length: clampValue(asNumber(menuInputsRaw.length) ?? 3, 0.01, 100),
-        thickness: clampValue(asNumber(menuInputsRaw.thickness) ?? 0.2, 0.01, 1),
-        scale: asNumber(menuInputsRaw.scale) ?? 1.2,
+        distance: asNumber(menuInputsRaw.distance) ?? EDITOR_DEFAULTS.menuInputs.distance,
+        angle: asNumber(menuInputsRaw.angle) ?? EDITOR_DEFAULTS.menuInputs.angle,
+        length: clampValue(
+          asNumber(menuInputsRaw.length) ?? EDITOR_DEFAULTS.menuInputs.length,
+          EDITOR_LIMITS.wallLength.min,
+          EDITOR_LIMITS.wallLength.max
+        ),
+        thickness: clampValue(
+          asNumber(menuInputsRaw.thickness) ?? EDITOR_DEFAULTS.menuInputs.thickness,
+          EDITOR_LIMITS.wallThickness.min,
+          EDITOR_LIMITS.wallThickness.max
+        ),
+        scale: asNumber(menuInputsRaw.scale) ?? EDITOR_DEFAULTS.menuInputs.scale,
       },
     };
   } catch {

@@ -1,4 +1,4 @@
-export type Vec2 = { x: number; y: number };
+import type { Vec2 } from "../types/plan";
 
 export function distance(a: Vec2, b: Vec2) {
   const dx = a.x - b.x;
