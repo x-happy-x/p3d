@@ -25,7 +25,7 @@ export default function TemplatePanel({ nodes, walls, scale, grid, wallThickness
       const names = await listTemplates();
       setTemplates(names);
       setSelectedTemplate((prev) => prev || names[0] || "");
-    } catch (error) {
+    } catch (_error) {
       setStatus("Не удалось загрузить список шаблонов.");
     }
   };
@@ -48,7 +48,7 @@ export default function TemplatePanel({ nodes, walls, scale, grid, wallThickness
     let data;
     try {
       data = JSON.parse(trimmed);
-    } catch (error) {
+    } catch (_error) {
       data = parseYaml(trimmed);
     }
     const normalized = normalizeImportData(data);
@@ -69,7 +69,7 @@ export default function TemplatePanel({ nodes, walls, scale, grid, wallThickness
       setStatus("Шаблон сохранен.");
       setTemplateName("");
       refreshTemplates();
-    } catch (error) {
+    } catch (_error) {
       setStatus("Не удалось сохранить шаблон.");
     }
   };
@@ -86,7 +86,7 @@ export default function TemplatePanel({ nodes, walls, scale, grid, wallThickness
       onApplyData(normalized);
       localStorage.setItem(LAST_TEMPLATE_NAME_STORAGE_KEY, selectedTemplate);
       setStatus("Шаблон загружен.");
-    } catch (error) {
+    } catch (_error) {
       setStatus("Не удалось загрузить шаблон.");
     }
   };

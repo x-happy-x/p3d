@@ -637,12 +637,13 @@ export default function CanvasPlanner({
     }
 
     if (dragRef.current.type === "wall") {
+      const wallId = dragRef.current.wallId;
       const delta = {
         x: worldPoint.x - dragRef.current.start.x,
         y: worldPoint.y - dragRef.current.start.y,
       };
       dragRef.current.start = worldPoint;
-      const wall = walls.find((item) => item.id === dragRef.current.wallId);
+      const wall = walls.find((item) => item.id === wallId);
       if (!wall) return;
       onUpdateNodes((prev) => prev.map((node) => {
         if (node.id === wall.a || node.id === wall.b) {

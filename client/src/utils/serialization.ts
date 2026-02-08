@@ -43,7 +43,7 @@ export function serializeToYaml(data: ExportData) {
   lines.push("walls:");
   data.walls.forEach((wall) => {
     lines.push(`  - id: ${wall.id}`);
-    lines.push(`    name: \"${String(wall.name || "").replace(/\"/g, "\\\\\"")}\"`);
+    lines.push(`    name: "${String(wall.name || "").replace(/"/g, '\\"')}"`);
     lines.push(`    a: ${wall.a}`);
     lines.push(`    b: ${wall.b}`);
     lines.push(`    thickness: ${wall.thickness}`);
@@ -103,7 +103,7 @@ export function parseYaml(text: string) {
     }
     if (section === "walls" && currentWall) {
       if (line.startsWith("name:")) {
-        currentWall.name = line.replace("name:", "").trim().replace(/^\"|\"$/g, "");
+        currentWall.name = line.replace("name:", "").trim().replace(/^"|"$/g, "");
       } else if (line.startsWith("a:")) {
         currentWall.a = Number(line.split(":")[1]);
       } else if (line.startsWith("b:")) {

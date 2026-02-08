@@ -1,4 +1,5 @@
 import type { NodePoint, Room, Wall } from "../types/plan";
+import { pointInPolygon } from "./geometry";
 
 export function buildRoomsFromWalls(nodes: NodePoint[], walls: Wall[]): Room[] {
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));

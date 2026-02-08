@@ -1,45 +1,34 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import CanvasPlanner from "./components/CanvasPlanner";
-import WallList from "./components/WallList";
-import TemplatePanel from "./components/TemplatePanel";
-import FloatingToolbar from "./components/FloatingToolbar";
-import FloatingPanel from "./components/FloatingPanel";
-import SidePanel from "./components/SidePanel";
-import ContextMenu from "./components/ContextMenu";
-import { buildRoomsFromWalls } from "./utils/rooms";
-import { getRoomArea, offsetPolygon, polygonArea } from "./utils/geometry";
-import { normalizeImportData } from "./utils/serialization";
+
 import { LAST_TEMPLATE_NAME_STORAGE_KEY, listTemplates, loadTemplate } from "./api/templates";
-import type { ContextMenuState, NodePoint, Selection, Vec2, ViewState, Wall } from "./types/plan";
+import CanvasPlanner from "./components/CanvasPlanner";
+import ContextMenu from "./components/ContextMenu";
+import FloatingPanel from "./components/FloatingPanel";
+import FloatingToolbar from "./components/FloatingToolbar";
+import HistoryPanel from "./components/HistoryPanel";
+import MainSidePanelContent from "./components/MainSidePanelContent";
+import SidePanel from "./components/SidePanel";
+import TemplatePanel from "./components/TemplatePanel";
+import { useDockLayout } from "./hooks/useDockLayout";
+import { useHistory } from "./hooks/useHistory";
+import {
+  DEFAULT_SECTION_ORDER,
+  DEFAULT_SIDE_SECTIONS,
+  usePersistUiPrefs,
+  useUiPrefs,
+  type MenuInputs,
+  type SideSectionId,
+  type UiPrefs,
+} from "./hooks/useUiPrefs";
+import { getRoomArea, offsetPolygon, polygonArea } from "./utils/geometry";
+import { buildRoomsFromWalls } from "./utils/rooms";
+import { normalizeImportData } from "./utils/serialization";
+import type { ContextMenuState, NodePoint, Room, Selection, Vec2, ViewState, Wall } from "./types/plan";
 import "./App.scss";
 
-const PANEL_MARGIN = 16;
-const PANEL_GAP = 12;
-
-const PANELS = [
-  { id: "tips", dock: "left", order: 0 },
-] as const;
+const PANELS = [{ id: "tips", dock: "left", order: 0 }] as const;
 
 type PanelId = (typeof PANELS)[number]["id"];
-
-type PanelPosition = {
-  x: number;
-  y: number;
-  custom?: boolean;
-};
-
-type PanelSize = {
-  width: number;
-  height: number;
-};
-
-type Dock = (typeof PANELS)[number]["dock"];
-
-type PanelDef = {
-  id: PanelId;
-  dock: Dock;
-  order: number;
-};
 
 const panelIconStroke = {
   fill: "none",
@@ -92,16 +81,6 @@ const SIDE_PANEL_ITEMS = [
   },
 ] as const;
 
-type SideSectionId = "stats" | "preview" | "view" | "objects";
-
-type MenuInputs = {
-  distance: number;
-  angle: number;
-  length: number;
-  thickness: number;
-  scale: number;
-};
-
 type HistoryState = {
   nodes: NodePoint[];
   walls: Wall[];
@@ -113,53 +92,14 @@ type HistoryState = {
   selection: Selection;
 };
 
-type HistoryEntry = {
-  snapshot: HistoryState;
-  label: string;
-  time: number;
-};
-
-const PREVIEW_SIZE = 220;
-const PREVIEW_PADDING = 16;
 const MIN_WALL_LENGTH = 0.01;
 const MAX_WALL_LENGTH = 100;
 const MIN_WALL_WIDTH = 0.01;
 const MAX_WALL_WIDTH = 1;
 const MAX_HISTORY = 100;
 const HISTORY_MERGE_MS = 600;
-const UI_PREFS_STORAGE_KEY = "p3d.ui-preferences.v1";
 
 const clampValue = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-
-const normalizePreviewPoints = (points: Vec2[]) => {
-  if (!points.length) return [];
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  points.forEach((point) => {
-    minX = Math.min(minX, point.x);
-    minY = Math.min(minY, point.y);
-    maxX = Math.max(maxX, point.x);
-    maxY = Math.max(maxY, point.y);
-  });
-  const width = Math.max(1, maxX - minX);
-  const height = Math.max(1, maxY - minY);
-  const scale = Math.min(
-    (PREVIEW_SIZE - PREVIEW_PADDING * 2) / width,
-    (PREVIEW_SIZE - PREVIEW_PADDING * 2) / height
-  );
-  const offsetX = PREVIEW_PADDING + (PREVIEW_SIZE - PREVIEW_PADDING * 2 - width * scale) / 2 - minX * scale;
-  const offsetY = PREVIEW_PADDING + (PREVIEW_SIZE - PREVIEW_PADDING * 2 - height * scale) / 2 - minY * scale;
-  return points.map((point) => ({
-    x: point.x * scale + offsetX,
-    y: point.y * scale + offsetY,
-  }));
-};
- 
-const previewPolyline = (points: Vec2[]) => (
-  points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ")
-);
 
 const getRoomKey = (cycle: number[]) => {
   if (!cycle.length) return "";
@@ -173,171 +113,8 @@ const getRoomKey = (cycle: number[]) => {
   return forwardKey < backwardKey ? forwardKey : backwardKey;
 };
 
-const DEFAULT_SIDE_SECTIONS: Record<SideSectionId, boolean> = {
-  stats: true,
-  preview: true,
-  view: true,
-  objects: true,
-};
-
-const DEFAULT_SECTION_ORDER: SideSectionId[] = ["stats", "preview", "view", "objects"];
-
-type UiPrefs = {
-  mode: "draw" | "select" | "edit" | "pan";
-  theme: "light" | "dark";
-  soloView: boolean;
-  showRoomNames: boolean;
-  showRoomSizes: boolean;
-  showWallNames: boolean;
-  showWallLength: boolean;
-  showWallWidth: boolean;
-  showInnerMeasurements: boolean;
-  showAngleLabels: boolean;
-  showRoomsPanel: boolean;
-  showWallsPanel: boolean;
-  expandedRooms: Record<number, boolean>;
-  expandedOrphans: boolean;
-  sidePanelWidth: number;
-  sidePanelCollapsed: boolean;
-  sidePanelActive: string | null;
-  sideSections: Record<SideSectionId, boolean>;
-  sectionOrder: SideSectionId[];
-  panelSizes: Partial<Record<PanelId, PanelSize>>;
-  panelPositions: Partial<Record<PanelId, PanelPosition>>;
-  floatingPanelCollapsed: Partial<Record<PanelId, boolean>>;
-  lastMenuInputs: MenuInputs;
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> => (
-  typeof value === "object" && value !== null && !Array.isArray(value)
-);
-
-const asNumber = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
-const asBoolean = (value: unknown) => (typeof value === "boolean" ? value : undefined);
-const asString = (value: unknown) => (typeof value === "string" ? value : undefined);
-
-const parseSectionOrder = (value: unknown): SideSectionId[] => {
-  if (!Array.isArray(value)) return DEFAULT_SECTION_ORDER;
-  const allowed = new Set<SideSectionId>(DEFAULT_SECTION_ORDER);
-  const next = value
-    .filter((item): item is SideSectionId => typeof item === "string" && allowed.has(item as SideSectionId));
-  const unique: SideSectionId[] = [];
-  next.forEach((item) => {
-    if (!unique.includes(item)) unique.push(item);
-  });
-  DEFAULT_SECTION_ORDER.forEach((item) => {
-    if (!unique.includes(item)) unique.push(item);
-  });
-  return unique;
-};
-
-const parseUiPrefs = (): Partial<UiPrefs> => {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(UI_PREFS_STORAGE_KEY);
-    if (!raw) {
-      const legacyTheme = window.localStorage.getItem("theme");
-      return legacyTheme === "light" || legacyTheme === "dark" ? { theme: legacyTheme } : {};
-    }
-    const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed)) return {};
-
-    const mode = parsed.mode === "draw" || parsed.mode === "select" || parsed.mode === "edit" || parsed.mode === "pan"
-      ? parsed.mode
-      : undefined;
-    const theme = parsed.theme === "light" || parsed.theme === "dark"
-      ? parsed.theme
-      : undefined;
-    const sidePanelActiveRaw = parsed.sidePanelActive;
-    const sidePanelActive = sidePanelActiveRaw === null ? null : asString(sidePanelActiveRaw);
-    const sidePanelWidth = asNumber(parsed.sidePanelWidth);
-
-    const sideSections = isRecord(parsed.sideSections)
-      ? {
-        stats: asBoolean(parsed.sideSections.stats) ?? DEFAULT_SIDE_SECTIONS.stats,
-        preview: asBoolean(parsed.sideSections.preview) ?? DEFAULT_SIDE_SECTIONS.preview,
-        view: asBoolean(parsed.sideSections.view) ?? DEFAULT_SIDE_SECTIONS.view,
-        objects: asBoolean(parsed.sideSections.objects) ?? DEFAULT_SIDE_SECTIONS.objects,
-      }
-      : undefined;
-
-    const expandedRooms: Record<number, boolean> = {};
-    if (isRecord(parsed.expandedRooms)) {
-      Object.entries(parsed.expandedRooms).forEach(([key, value]) => {
-        const roomId = Number(key);
-        if (Number.isInteger(roomId) && roomId > 0 && typeof value === "boolean") {
-          expandedRooms[roomId] = value;
-        }
-      });
-    }
-
-    const panelSizes: Partial<Record<PanelId, PanelSize>> = {};
-    if (isRecord(parsed.panelSizes) && isRecord(parsed.panelSizes.tips)) {
-      const width = asNumber(parsed.panelSizes.tips.width);
-      const height = asNumber(parsed.panelSizes.tips.height);
-      if (width !== undefined && height !== undefined) {
-        panelSizes.tips = { width, height };
-      }
-    }
-
-    const panelPositions: Partial<Record<PanelId, PanelPosition>> = {};
-    if (isRecord(parsed.panelPositions) && isRecord(parsed.panelPositions.tips)) {
-      const x = asNumber(parsed.panelPositions.tips.x);
-      const y = asNumber(parsed.panelPositions.tips.y);
-      if (x !== undefined && y !== undefined) {
-        panelPositions.tips = {
-          x,
-          y,
-          custom: asBoolean(parsed.panelPositions.tips.custom),
-        };
-      }
-    }
-
-    const floatingPanelCollapsed: Partial<Record<PanelId, boolean>> = {};
-    if (isRecord(parsed.floatingPanelCollapsed) && typeof parsed.floatingPanelCollapsed.tips === "boolean") {
-      floatingPanelCollapsed.tips = parsed.floatingPanelCollapsed.tips;
-    }
-
-    const menuInputsRaw = isRecord(parsed.lastMenuInputs) ? parsed.lastMenuInputs : {};
-
-    return {
-      mode,
-      theme,
-      soloView: asBoolean(parsed.soloView),
-      showRoomNames: asBoolean(parsed.showRoomNames),
-      showRoomSizes: asBoolean(parsed.showRoomSizes),
-      showWallNames: asBoolean(parsed.showWallNames),
-      showWallLength: asBoolean(parsed.showWallLength),
-      showWallWidth: asBoolean(parsed.showWallWidth),
-      showInnerMeasurements: asBoolean(parsed.showInnerMeasurements),
-      showAngleLabels: asBoolean(parsed.showAngleLabels),
-      showRoomsPanel: asBoolean(parsed.showRoomsPanel),
-      showWallsPanel: asBoolean(parsed.showWallsPanel),
-      expandedRooms,
-      expandedOrphans: asBoolean(parsed.expandedOrphans),
-      sidePanelWidth: sidePanelWidth !== undefined ? clampValue(sidePanelWidth, 260, 640) : undefined,
-      sidePanelCollapsed: asBoolean(parsed.sidePanelCollapsed),
-      sidePanelActive,
-      sideSections,
-      sectionOrder: parseSectionOrder(parsed.sectionOrder),
-      panelSizes,
-      panelPositions,
-      floatingPanelCollapsed,
-      lastMenuInputs: {
-        distance: asNumber(menuInputsRaw.distance) ?? 3,
-        angle: asNumber(menuInputsRaw.angle) ?? 90,
-        length: clampValue(asNumber(menuInputsRaw.length) ?? 3, MIN_WALL_LENGTH, MAX_WALL_LENGTH),
-        thickness: clampValue(asNumber(menuInputsRaw.thickness) ?? 0.2, MIN_WALL_WIDTH, MAX_WALL_WIDTH),
-        scale: asNumber(menuInputsRaw.scale) ?? 1.2,
-      },
-    };
-  } catch {
-    return {};
-  }
-};
-
 export default function App() {
-  const uiPrefs = useMemo(() => parseUiPrefs(), []);
+  const uiPrefs = useUiPrefs();
 
   const [mode, setMode] = useState<"draw" | "select" | "edit" | "pan">(uiPrefs.mode ?? "draw");
   const [theme, setTheme] = useState<"light" | "dark">(uiPrefs.theme ?? "light");
@@ -375,8 +152,13 @@ export default function App() {
     scale: 1.2,
   });
 
-  const [panelSizes, setPanelSizes] = useState<Partial<Record<PanelId, PanelSize>>>(uiPrefs.panelSizes ?? {});
-  const [panelPositions, setPanelPositions] = useState<Partial<Record<PanelId, PanelPosition>>>(uiPrefs.panelPositions ?? {});
+  const {
+    panelSizes,
+    panelPositions,
+    handlePanelSize,
+    handlePanelDrag,
+    resetDockLayout,
+  } = useDockLayout(PANELS, uiPrefs.panelSizes ?? {}, uiPrefs.panelPositions ?? {});
   const [floatingPanelCollapsed, setFloatingPanelCollapsed] = useState<Partial<Record<PanelId, boolean>>>(
     uiPrefs.floatingPanelCollapsed ?? { tips: true }
   );
@@ -386,7 +168,6 @@ export default function App() {
   const [sideSections, setSideSections] = useState<Record<SideSectionId, boolean>>(uiPrefs.sideSections ?? DEFAULT_SIDE_SECTIONS);
   const [sectionOrder, setSectionOrder] = useState<SideSectionId[]>(uiPrefs.sectionOrder ?? DEFAULT_SECTION_ORDER);
   const [draggingSection, setDraggingSection] = useState<SideSectionId | null>(null);
-  const [historyVersion, setHistoryVersion] = useState(0);
 
   const toggleSection = (id: SideSectionId) => {
     setSideSections((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -408,13 +189,6 @@ export default function App() {
 
   const nodeIdRef = useRef(1);
   const wallIdRef = useRef(1);
-  const historyEntriesRef = useRef<HistoryEntry[]>([]);
-  const historyIndexRef = useRef(-1);
-  const historyPendingRef = useRef<{ label: string; time: number } | null>(null);
-  const historyBusyRef = useRef(false);
-  const historyLastAtRef = useRef(0);
-  const historyLastLabelRef = useRef("");
-  const historyInitializedRef = useRef(false);
 
   const createSnapshot = useCallback((): HistoryState => ({
     nodes: nodes.map((node) => ({ ...node })),
@@ -431,14 +205,7 @@ export default function App() {
     },
   }), [nodes, walls, roomNames, defaultWallThickness, scale, grid, snapEnabled, selection]);
 
-  const recordHistory = useCallback((label = "Изменение") => {
-    if (historyBusyRef.current) return;
-    historyPendingRef.current = { label, time: Date.now() };
-  }, []);
-
-
   const applySnapshot = useCallback((snapshot: HistoryState) => {
-    historyBusyRef.current = true;
     setNodes(snapshot.nodes);
     setWalls(snapshot.walls);
     setRoomNames(snapshot.roomNames);
@@ -449,75 +216,78 @@ export default function App() {
     setSelection(snapshot.selection);
     nodeIdRef.current = snapshot.nodes.reduce((max, node) => Math.max(max, node.id), 0) + 1;
     wallIdRef.current = snapshot.walls.reduce((max, wall) => Math.max(max, wall.id), 0) + 1;
-    historyLastAtRef.current = 0;
-    historyLastLabelRef.current = "";
-    historyBusyRef.current = false;
   }, []);
 
-  const handleUndo = useCallback(() => {
-    if (historyIndexRef.current <= 0) return;
-    historyIndexRef.current -= 1;
-    const entry = historyEntriesRef.current[historyIndexRef.current];
-    if (!entry) return;
-    applySnapshot(entry.snapshot);
-    setHistoryVersion((prev) => prev + 1);
-  }, [applySnapshot]);
+  const {
+    recordHistory,
+    undo: handleUndo,
+    redo: handleRedo,
+    jumpTo: handleHistoryJump,
+    entries: historyEntries,
+    canUndo,
+    canRedo,
+  } = useHistory<HistoryState>({
+    createSnapshot,
+    applySnapshot,
+    watch: [nodes, walls, roomNames, defaultWallThickness, scale, grid, snapEnabled, selection],
+    mergeMs: HISTORY_MERGE_MS,
+    maxEntries: MAX_HISTORY,
+  });
 
-  const handleRedo = useCallback(() => {
-    if (historyIndexRef.current >= historyEntriesRef.current.length - 1) return;
-    historyIndexRef.current += 1;
-    const entry = historyEntriesRef.current[historyIndexRef.current];
-    if (!entry) return;
-    applySnapshot(entry.snapshot);
-    setHistoryVersion((prev) => prev + 1);
-  }, [applySnapshot]);
+  const uiPrefsPayload = useMemo<UiPrefs>(
+    () => ({
+      mode,
+      theme,
+      soloView,
+      showRoomNames,
+      showRoomSizes,
+      showWallNames,
+      showWallLength,
+      showWallWidth,
+      showInnerMeasurements,
+      showAngleLabels,
+      showRoomsPanel,
+      showWallsPanel,
+      expandedRooms,
+      expandedOrphans,
+      sidePanelWidth,
+      sidePanelCollapsed,
+      sidePanelActive,
+      sideSections,
+      sectionOrder,
+      panelSizes,
+      panelPositions,
+      floatingPanelCollapsed,
+      lastMenuInputs: menuInputs,
+    }),
+    [
+      mode,
+      theme,
+      soloView,
+      showRoomNames,
+      showRoomSizes,
+      showWallNames,
+      showWallLength,
+      showWallWidth,
+      showInnerMeasurements,
+      showAngleLabels,
+      showRoomsPanel,
+      showWallsPanel,
+      expandedRooms,
+      expandedOrphans,
+      sidePanelWidth,
+      sidePanelCollapsed,
+      sidePanelActive,
+      sideSections,
+      sectionOrder,
+      panelSizes,
+      panelPositions,
+      floatingPanelCollapsed,
+      menuInputs,
+    ]
+  );
 
-  useEffect(() => {
-    if (historyInitializedRef.current) return;
-    historyInitializedRef.current = true;
-    historyEntriesRef.current = [
-      {
-        snapshot: createSnapshot(),
-        label: "Начальное состояние",
-        time: Date.now(),
-      },
-    ];
-    historyIndexRef.current = 0;
-    setHistoryVersion((prev) => prev + 1);
-  }, [createSnapshot]);
-  useEffect(() => {
-    const pending = historyPendingRef.current;
-    if (!pending || historyBusyRef.current) return;
-    historyPendingRef.current = null;
-    const now = pending.time;
-    if (
-      historyEntriesRef.current.length
-      && now - historyLastAtRef.current < HISTORY_MERGE_MS
-      && historyLastLabelRef.current === pending.label
-    ) {
-      const last = historyEntriesRef.current[historyEntriesRef.current.length - 1];
-      if (last) {
-        last.snapshot = createSnapshot();
-        last.time = now;
-      }
-    } else {
-      if (historyIndexRef.current < historyEntriesRef.current.length - 1) {
-        historyEntriesRef.current = historyEntriesRef.current.slice(0, historyIndexRef.current + 1);
-      }
-      historyEntriesRef.current.push({
-        snapshot: createSnapshot(),
-        label: pending.label,
-        time: now,
-      });
-      if (historyEntriesRef.current.length > MAX_HISTORY) {
-        historyEntriesRef.current.shift();
-      }
-      historyIndexRef.current = historyEntriesRef.current.length - 1;
-    }
-    historyLastAtRef.current = now;
-    historyLastLabelRef.current = pending.label;
-    setHistoryVersion((prev) => prev + 1);
-  }, [createSnapshot, nodes, walls, roomNames, defaultWallThickness, scale, grid, snapEnabled, selection]);
+  usePersistUiPrefs(uiPrefsPayload, theme);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -660,93 +430,9 @@ export default function App() {
     return (Math.acos(cos) * 180) / Math.PI;
   }, [nodes]);
 
-  const handlePanelSize = (panelId: PanelId, size: PanelSize) => {
-    setPanelSizes((prev) => {
-      const nextSizes = { ...prev, [panelId]: size };
-      setPanelPositions((posPrev) => computeDockLayout(PANELS, nextSizes, posPrev));
-      return nextSizes;
-    });
-  };
-
-  const handlePanelDrag = (panelId: PanelId, pos: PanelPosition) => {
-    setPanelPositions((prev) => ({
-      ...prev,
-      [panelId]: { ...prev[panelId], x: pos.x, y: pos.y, custom: true },
-    }));
-  };
-
-  const computePositions = () => {
-    setPanelPositions((prev) => computeDockLayout(PANELS, panelSizes, prev));
-  };
-
-  useEffect(() => {
-    const handleResize = () => computePositions();
-    window.addEventListener("resize", handleResize);
-    computePositions();
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
-
-  useEffect(() => {
-    const payload: UiPrefs = {
-      mode,
-      theme,
-      soloView,
-      showRoomNames,
-      showRoomSizes,
-      showWallNames,
-      showWallLength,
-      showWallWidth,
-      showInnerMeasurements,
-      showAngleLabels,
-      showRoomsPanel,
-      showWallsPanel,
-      expandedRooms,
-      expandedOrphans,
-      sidePanelWidth,
-      sidePanelCollapsed,
-      sidePanelActive,
-      sideSections,
-      sectionOrder,
-      panelSizes,
-      panelPositions,
-      floatingPanelCollapsed,
-      lastMenuInputs: menuInputs,
-    };
-    try {
-      localStorage.setItem(UI_PREFS_STORAGE_KEY, JSON.stringify(payload));
-      localStorage.setItem("theme", theme);
-    } catch {
-      // Ignore storage quota and private mode errors.
-    }
-  }, [
-    mode,
-    theme,
-    soloView,
-    showRoomNames,
-    showRoomSizes,
-    showWallNames,
-    showWallLength,
-    showWallWidth,
-    showInnerMeasurements,
-    showAngleLabels,
-    showRoomsPanel,
-    showWallsPanel,
-    expandedRooms,
-    expandedOrphans,
-    sidePanelWidth,
-    sidePanelCollapsed,
-    sidePanelActive,
-    sideSections,
-    sectionOrder,
-    panelSizes,
-    panelPositions,
-    floatingPanelCollapsed,
-    menuInputs,
-  ]);
 
   const handleCreateWallChain = (points: Vec2[]) => {
     const wallCount = Math.max(0, points.length - 1);
@@ -875,7 +561,7 @@ export default function App() {
   };
 
   const handleResetLayout = () => {
-    setPanelPositions(() => computeDockLayout(PANELS, panelSizes, {}));
+    resetDockLayout();
     setSidePanelWidth(360);
     setSidePanelCollapsed(false);
     setSidePanelActive("main");
@@ -1115,7 +801,7 @@ export default function App() {
     recordHistory(`Отцепить точки: ${selection.nodes.length}`);
     setWalls((prevWalls) => {
       let nextWalls = [...prevWalls];
-      let nextNodes = [...nodes];
+      const nextNodes = [...nodes];
       selection.nodes.forEach((nodeId) => {
         nextWalls = nextWalls.map((wall) => {
           if (wall.a !== nodeId && wall.b !== nodeId) return wall;
@@ -1328,21 +1014,6 @@ export default function App() {
     setSelection(next);
   };
 
-  const canUndo = historyVersion >= 0 && historyIndexRef.current > 0;
-  const canRedo = historyVersion >= 0 && historyIndexRef.current < historyEntriesRef.current.length - 1;
-  const historyEntries = useMemo(() => {
-    const list = historyEntriesRef.current;
-    const currentIndex = historyIndexRef.current;
-    return list.map((entry, index) => ({
-      key: `entry-${entry.time}-${index}`,
-      label: entry.label,
-      time: entry.time,
-      kind: "entry" as const,
-      index,
-      disabled: index === currentIndex,
-    }));
-  }, [historyVersion]);
-
   const formatHistoryTime = (time: number) => {
     const diff = Date.now() - time;
     if (diff < 10_000) return "только что";
@@ -1350,16 +1021,6 @@ export default function App() {
     if (diff < 3_600_000) return `${Math.round(diff / 60_000)} мин назад`;
     return new Date(time).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   };
-
-  const handleHistoryJump = useCallback((index: number) => {
-    if (index < 0 || index >= historyEntriesRef.current.length) return;
-    if (index === historyIndexRef.current) return;
-    historyIndexRef.current = index;
-    const entry = historyEntriesRef.current[index];
-    if (!entry) return;
-    applySnapshot(entry.snapshot);
-    setHistoryVersion((prev) => prev + 1);
-  }, [applySnapshot]);
 
   return (
     <div className="canvas-shell">
@@ -1439,429 +1100,74 @@ export default function App() {
                 ...item,
                 content: item.id === "main"
                   ? (
-                    <div className="side-sections">
-                      {sectionOrder.map((sectionId) => {
-                        const isOpen = sideSections[sectionId];
-                        const title = sectionId === "stats"
-                          ? "Статистика"
-                          : sectionId === "preview"
-                            ? "Превью"
-                            : sectionId === "view"
-                              ? "Настройки просмотра"
-                              : "Комнаты и стены";
-                        const content = sectionId === "stats"
-                          ? (
-                            <div className="stats-grid">
-                              <div>
-                                <span className="label">Комнат</span>
-                                <span className="value">{rooms.length}</span>
-                              </div>
-                              <div>
-                                <span className="label">Стен</span>
-                                      <span className="value">{walls.length}</span>
-                                    </div>
-                                    <div>
-                                      <span className="label">Площадь</span>
-                                      <span className="value">{totalArea.toFixed(2)} м²</span>
-                                    </div>
-                                  </div>
-                          )
-                          : sectionId === "preview"
-                            ? (
-                              <div className="selection-preview">
-                                {selection.nodes.length
-                                || selection.walls.length
-                                || selection.rooms.length ? (
-                                  (() => {
-                                    const roomItems = selection.rooms
-                                      .map((roomId) => rooms.find((itemRoom) => itemRoom.id === roomId))
-                                      .filter((roomItem): roomItem is NonNullable<typeof roomItem> => Boolean(roomItem));
-                                    const wallItems = selection.walls
-                                      .map((wallId) => walls.find((itemWall) => itemWall.id === wallId))
-                                      .filter((wallItem): wallItem is NonNullable<typeof wallItem> => Boolean(wallItem));
-                                    const nodeItems = selection.nodes
-                                      .map((nodeId) => nodes.find((itemNode) => itemNode.id === nodeId))
-                                      .filter((nodeItem): nodeItem is NonNullable<typeof nodeItem> => Boolean(nodeItem));
-
-                                    const previewPoints: Vec2[] = [];
-                                    roomItems.forEach((roomItem) => previewPoints.push(...roomItem.points));
-                                    wallItems.forEach((wallItem) => {
-                                      const nodeA = nodes.find((node) => node.id === wallItem.a);
-                                      const nodeB = nodes.find((node) => node.id === wallItem.b);
-                                      if (nodeA && nodeB) {
-                                        previewPoints.push(nodeA, nodeB);
-                                      }
-                                    });
-                                    nodeItems.forEach((nodeItem) => previewPoints.push(nodeItem));
-
-                                    const normalized = normalizePreviewPoints(previewPoints.length ? previewPoints : [{ x: 0, y: 0 }]);
-                                    let index = 0;
-                                    const roomNormalized = roomItems.map((roomItem) => {
-                                      const points = normalized.slice(index, index + roomItem.points.length);
-                                      index += roomItem.points.length;
-                                      return { id: roomItem.id, points };
-                                    });
-                                    const wallNormalized = wallItems.map((wallItem) => {
-                                      const nodeA = nodes.find((node) => node.id === wallItem.a);
-                                      const nodeB = nodes.find((node) => node.id === wallItem.b);
-                                      if (!nodeA || !nodeB) return null;
-                                      const points = normalized.slice(index, index + 2);
-                                      index += 2;
-                                      return { id: wallItem.id, points };
-                                    }).filter(Boolean);
-                                    const nodeNormalized = nodeItems.map((nodeItem) => {
-                                      const [point] = normalized.slice(index, index + 1);
-                                      index += 1;
-                                      return { id: nodeItem.id, point };
-                                    });
-
-                                    return (
-                                      <div className="preview-panel">
-                                        <svg
-                                          width={PREVIEW_SIZE}
-                                          height={PREVIEW_SIZE}
-                                          viewBox={`0 0 ${PREVIEW_SIZE} ${PREVIEW_SIZE}`}
-                                          className="preview-svg preview-svg-large"
-                                        >
-                                          {roomNormalized.map((roomItem) => (
-                                            <polygon
-                                              key={`room-${roomItem.id}`}
-                                              points={previewPolyline(roomItem.points)}
-                                              className="preview-room"
-                                            />
-                                          ))}
-                                          {wallNormalized.map((wallItem) => (
-                                            <line
-                                              key={`wall-${wallItem?.id}`}
-                                              x1={wallItem!.points[0].x}
-                                              y1={wallItem!.points[0].y}
-                                              x2={wallItem!.points[1].x}
-                                              y2={wallItem!.points[1].y}
-                                              className="preview-wall"
-                                            />
-                                          ))}
-                                          {nodeNormalized.map((nodeItem) => (
-                                            <circle
-                                              key={`node-${nodeItem.id}`}
-                                              cx={nodeItem.point.x}
-                                              cy={nodeItem.point.y}
-                                              r={4}
-                                              className="preview-node"
-                                            />
-                                          ))}
-                                        </svg>
-                                        <div className="preview-labels">
-                                          {!!roomItems.length && (
-                                            <div>Комнаты: {roomItems.map((roomItem) => roomItem.id).join(", ")}</div>
-                                          )}
-                                          {!!wallItems.length && (
-                                            <div>Стены: {wallItems.map((wallItem) => wallItem.id).join(", ")}</div>
-                                          )}
-                                          {!!nodeItems.length && (
-                                            <div>Точки: {nodeItems.map((nodeItem) => nodeItem.id).join(", ")}</div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    );
-                                  })()
-                                ) : (
-                                  <div className="preview-empty">Нет выбранных объектов.</div>
-                                )}
-                              </div>
-                            )
-                            : sectionId === "view"
-                              ? (
-                                <div className="view-controls">
-                                  <div className="chip-group">
-                                    <button
-                                      className={`chip ${soloView ? "active" : ""}`}
-                                      onClick={() => setSoloView((prev) => !prev)}
-                                      type="button"
-                                    >
-                                      Только выбранные
-                                    </button>
-                                    <button
-                                      className={`chip ${showRoomNames ? "active" : ""}`}
-                                      onClick={() => setShowRoomNames((prev) => !prev)}
-                                      type="button"
-                                    >
-                                      Названия комнат
-                                    </button>
-                                    <button
-                                      className={`chip ${showRoomSizes ? "active" : ""}`}
-                                      onClick={() => setShowRoomSizes((prev) => !prev)}
-                                      type="button"
-                                    >
-                                      Площади комнат
-                                    </button>
-                                    <button
-                                      className={`chip ${showWallNames ? "active" : ""}`}
-                                      onClick={() => setShowWallNames((prev) => !prev)}
-                                      type="button"
-                                    >
-                                      Названия стен
-                                    </button>
-                                    <button
-                                      className={`chip ${showWallLength ? "active" : ""}`}
-                                      onClick={() => setShowWallLength((prev) => !prev)}
-                                      type="button"
-                                    >
-                                      Длина стен
-                                    </button>
-                                    <button
-                                      className={`chip ${showWallWidth ? "active" : ""}`}
-                                      onClick={() => setShowWallWidth((prev) => !prev)}
-                                      type="button"
-                                    >
-                                      Ширина стен
-                                    </button>
-                                    <button
-                                      className={`chip ${showAngleLabels ? "active" : ""}`}
-                                      onClick={() => setShowAngleLabels((prev) => !prev)}
-                                      type="button"
-                                    >
-                                      Углы
-                                    </button>
-                                  </div>
-                                  <div className="view-subsection">
-                                    <div className="view-subtitle">Внутренние размеры</div>
-                                    <div className="chip-group">
-                                      <button
-                                        className={`chip ${showInnerMeasurements ? "active" : ""}`}
-                                        onClick={() => setShowInnerMeasurements((prev) => !prev)}
-                                        type="button"
-                                      >
-                                        Внутренняя длина и площадь
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              )
-                            : (
-                              <div className="objects-panel">
-                                <div className="chip-group">
-                                  <button
-                                    className={`chip ${showRoomsPanel ? "active" : ""}`}
-                                    onClick={() => setShowRoomsPanel((prev) => !prev)}
-                                    type="button"
-                                  >
-                                    Комнаты
-                                  </button>
-                                  <button
-                                    className={`chip ${showWallsPanel ? "active" : ""}`}
-                                    onClick={() => setShowWallsPanel((prev) => !prev)}
-                                    type="button"
-                                  >
-                                    Стены
-                                  </button>
-                                </div>
-                                {showRoomsPanel && (
-                                  <div className="objects-subsection">
-                                    {rooms.map((room) => {
-                                      const isExpanded = !!expandedRooms[room.id];
-                                      const isEditing = editingRoomId === room.id;
-                                      const roomWalls = wallGroups.roomWalls.get(room.id) || [];
-                                      return (
-                                        <div key={room.id} className="room-entry">
-                                          <div
-                                            className={`room-item${selection.rooms.includes(room.id) ? " active" : ""}`}
-                                            onClick={(event) => handleRoomSelect(room.id, event)}
-                                          >
-                                            <button
-                                              className="room-toggle"
-                                              onClick={(event) => {
-                                                event.stopPropagation();
-                                                setExpandedRooms((prev) => ({ ...prev, [room.id]: !prev[room.id] }));
-                                              }}
-                                              type="button"
-                                            >
-                                              <svg viewBox="0 0 24 24" aria-hidden="true">
-                                                <path
-                                                  d={isExpanded ? "M6 9l6 6 6-6" : "M9 6l6 6-6 6"}
-                                                  fill="none"
-                                                  stroke="currentColor"
-                                                  strokeWidth="1.6"
-                                                  strokeLinecap="round"
-                                                  strokeLinejoin="round"
-                                                />
-                                              </svg>
-                                            </button>
-                                            {isEditing ? (
-                                              <input
-                                                className="room-name-input"
-                                                value={roomNameDraft}
-                                                onChange={(event) => setRoomNameDraft(event.target.value)}
-                                                onBlur={commitRoomEdit}
-                                                onKeyDown={(event) => {
-                                                  if (event.key === "Enter") commitRoomEdit();
-                                                  if (event.key === "Escape") setEditingRoomId(null);
-                                                }}
-                                                onClick={(event) => event.stopPropagation()}
-                                                autoFocus
-                                              />
-                                            ) : (
-                                              <span
-                                                className="room-name"
-                                                onDoubleClick={(event) => {
-                                                  event.stopPropagation();
-                                                  startRoomEdit(room);
-                                                }}
-                                              >
-                                                {room.name || `Комната ${room.id}`}
-                                              </span>
-                                            )}
-                                            <strong>
-                                              {(showInnerMeasurements
-                                                ? (roomAreaById[room.id] ?? getRoomArea(room, scale))
-                                                : getRoomArea(room, scale)
-                                              ).toFixed(2)} м²
-                                            </strong>
-                                          </div>
-                                          {showWallsPanel && isExpanded && (
-                                            <div className="room-walls">
-                                              {roomWalls.length ? (
-                                            <WallList
-                                              walls={roomWalls}
-                                              nodes={nodes}
-                                              scale={scale}
-                                              selectedWallIds={selection.walls}
-                                              hoveredWallId={hoveredWallId}
-                                              showInnerMeasurements={showInnerMeasurements}
-                                              innerLengthByWallId={innerLengthByWallId}
-                                              onHover={setHoveredWallId}
-                                              onSelect={handleWallSelect}
-                                              onRename={handleWallRename}
-                                              onLengthChange={handleWallLengthChange}
-                                              onWidthChange={handleWallWidthChange}
-                                            />
-                                          ) : (
-                                            <div className="wall-empty">Стен нет.</div>
-                                          )}
-                                            </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                    {showWallsPanel && wallGroups.orphanWalls.length > 0 && (
-                                      <div className="room-entry">
-                                        <div className="room-item orphan-title">
-                                          <button
-                                            className="room-toggle"
-                                            onClick={() => setExpandedOrphans((prev) => !prev)}
-                                            type="button"
-                                          >
-                                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                              <path
-                                                d={expandedOrphans ? "M6 9l6 6 6-6" : "M9 6l6 6-6 6"}
-                                                fill="none"
-                                                stroke="currentColor"
-                                                strokeWidth="1.6"
-                                                strokeLinecap="round"
-                                                strokeLinejoin="round"
-                                              />
-                                            </svg>
-                                          </button>
-                                          <span className="room-name">Отдельные</span>
-                                        </div>
-                                        {expandedOrphans && (
-                                          <div className="room-walls">
-                                            <WallList
-                                              walls={wallGroups.orphanWalls}
-                                              nodes={nodes}
-                                              scale={scale}
-                                              selectedWallIds={selection.walls}
-                                              hoveredWallId={hoveredWallId}
-                                              showInnerMeasurements={showInnerMeasurements}
-                                              innerLengthByWallId={innerLengthByWallId}
-                                              onHover={setHoveredWallId}
-                                              onSelect={handleWallSelect}
-                                              onRename={handleWallRename}
-                                              onLengthChange={handleWallLengthChange}
-                                              onWidthChange={handleWallWidthChange}
-                                            />
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                {showWallsPanel && !showRoomsPanel && (
-                                  <WallList
-                                    walls={walls}
-                                    nodes={nodes}
-                                    scale={scale}
-                                    selectedWallIds={selection.walls}
-                                    hoveredWallId={hoveredWallId}
-                                    showInnerMeasurements={showInnerMeasurements}
-                                    innerLengthByWallId={innerLengthByWallId}
-                                    onHover={setHoveredWallId}
-                                    onSelect={handleWallSelect}
-                                    onRename={handleWallRename}
-                                    onLengthChange={handleWallLengthChange}
-                                    onWidthChange={handleWallWidthChange}
-                                  />
-                                )}
-                              </div>
-                            );
-                        return (
-                          <section key={sectionId} className={`side-section ${isOpen ? "open" : "collapsed"}`}>
-                            <button
-                              className={`side-section-toggle ${draggingSection === sectionId ? "dragging" : ""}`}
-                              onClick={() => toggleSection(sectionId)}
-                              draggable
-                              onDragStart={(event) => {
-                                setDraggingSection(sectionId);
-                                event.dataTransfer.effectAllowed = "move";
-                                event.dataTransfer.setData("text/plain", sectionId);
-                              }}
-                              onDragEnd={() => setDraggingSection(null)}
-                              onDragOver={(event) => event.preventDefault()}
-                              onDrop={() => handleSectionDrop(sectionId)}
-                            >
-                              <span>{title}</span>
-                              <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path
-                                  d={isOpen ? "M6 9l6 6 6-6" : "M9 6l6 6-6 6"}
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="1.6"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                            </button>
-                            {isOpen && (
-                              <div className="side-section-body">
-                                {content}
-                              </div>
-                            )}
-                          </section>
-                        );
-                      })}
-                    </div>
+                    <MainSidePanelContent
+                      sectionOrder={sectionOrder}
+                      sideSections={sideSections}
+                      draggingSection={draggingSection}
+                      onToggleSection={toggleSection}
+                      onSectionDragStart={(sectionId, event) => {
+                        setDraggingSection(sectionId);
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", sectionId);
+                      }}
+                      onSectionDragEnd={() => setDraggingSection(null)}
+                      onSectionDrop={handleSectionDrop}
+                      rooms={rooms}
+                      walls={walls}
+                      nodes={nodes}
+                      selection={selection}
+                      totalArea={totalArea}
+                      scale={scale}
+                      showInnerMeasurements={showInnerMeasurements}
+                      roomAreaById={roomAreaById}
+                      soloView={soloView}
+                      setSoloView={setSoloView}
+                      showRoomNames={showRoomNames}
+                      setShowRoomNames={setShowRoomNames}
+                      showRoomSizes={showRoomSizes}
+                      setShowRoomSizes={setShowRoomSizes}
+                      showWallNames={showWallNames}
+                      setShowWallNames={setShowWallNames}
+                      showWallLength={showWallLength}
+                      setShowWallLength={setShowWallLength}
+                      showWallWidth={showWallWidth}
+                      setShowWallWidth={setShowWallWidth}
+                      showAngleLabels={showAngleLabels}
+                      setShowAngleLabels={setShowAngleLabels}
+                      setShowInnerMeasurements={setShowInnerMeasurements}
+                      showRoomsPanel={showRoomsPanel}
+                      setShowRoomsPanel={setShowRoomsPanel}
+                      showWallsPanel={showWallsPanel}
+                      setShowWallsPanel={setShowWallsPanel}
+                      expandedRooms={expandedRooms}
+                      setExpandedRooms={setExpandedRooms}
+                      expandedOrphans={expandedOrphans}
+                      setExpandedOrphans={setExpandedOrphans}
+                      editingRoomId={editingRoomId}
+                      setEditingRoomId={setEditingRoomId}
+                      roomNameDraft={roomNameDraft}
+                      setRoomNameDraft={setRoomNameDraft}
+                      commitRoomEdit={commitRoomEdit}
+                      startRoomEdit={startRoomEdit}
+                      handleRoomSelect={handleRoomSelect}
+                      wallGroups={wallGroups}
+                      selectedWallIds={selection.walls}
+                      hoveredWallId={hoveredWallId}
+                      setHoveredWallId={setHoveredWallId}
+                      innerLengthByWallId={innerLengthByWallId}
+                      handleWallSelect={handleWallSelect}
+                      handleWallRename={handleWallRename}
+                      handleWallLengthChange={handleWallLengthChange}
+                      handleWallWidthChange={handleWallWidthChange}
+                    />
                   )
                   : item.id === "history"
                     ? (
-                      <div className="history-list">
-                        {historyEntries.length ? (
-                          [...historyEntries].reverse().map((entry) => (
-                            <button
-                              key={entry.key}
-                              className={`history-item${entry.disabled ? " disabled" : ""}`}
-                              type="button"
-                              disabled={entry.disabled}
-                              onClick={() => {
-                                handleHistoryJump(entry.index);
-                              }}
-                            >
-                              <span className="history-title">{entry.label}</span>
-                              <span className="history-time">{formatHistoryTime(entry.time)}</span>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="history-empty">История пуста.</div>
-                        )}
-                      </div>
+                      <HistoryPanel
+                        entries={historyEntries}
+                        onJump={handleHistoryJump}
+                        formatTime={formatHistoryTime}
+                      />
                     )
                     : (
                     <TemplatePanel
@@ -1943,53 +1249,4 @@ function toggleSelection(list: number[], id: number, additive: boolean) {
   const index = list.indexOf(id);
   if (index >= 0) list.splice(index, 1);
   else list.push(id);
-}
-
-function computeDockLayout(
-  defs: readonly PanelDef[],
-  sizes: Partial<Record<PanelId, PanelSize>>,
-  positions: Partial<Record<PanelId, PanelPosition>>
-) {
-  const viewport = { width: window.innerWidth, height: window.innerHeight };
-  const next: Partial<Record<PanelId, PanelPosition>> = { ...positions };
-
-  const rightPanels = defs.filter((panel) => panel.dock === "right");
-  let yRight = PANEL_MARGIN;
-  rightPanels.sort((a, b) => a.order - b.order).forEach((panel) => {
-    const size = sizes[panel.id] || { width: 280, height: 160 };
-    const existing = positions[panel.id];
-    if (existing && existing.custom) return;
-    next[panel.id] = {
-      x: viewport.width - size.width - PANEL_MARGIN,
-      y: yRight,
-      custom: false,
-    };
-    yRight += size.height + PANEL_GAP;
-  });
-
-  const leftPanels = defs.filter((panel) => panel.dock === "left");
-  leftPanels.sort((a, b) => a.order - b.order).forEach((panel) => {
-    const size = sizes[panel.id] || { width: 260, height: 140 };
-    const existing = positions[panel.id];
-    if (existing && existing.custom) return;
-    next[panel.id] = {
-      x: PANEL_MARGIN,
-      y: viewport.height - size.height - PANEL_MARGIN,
-      custom: false,
-    };
-  });
-
-  const bottomPanels = defs.filter((panel) => panel.dock === "bottom");
-  bottomPanels.sort((a, b) => a.order - b.order).forEach((panel) => {
-    const size = sizes[panel.id] || { width: 500, height: 200 };
-    const existing = positions[panel.id];
-    if (existing && existing.custom) return;
-    next[panel.id] = {
-      x: (viewport.width - size.width) / 2,
-      y: viewport.height - size.height - PANEL_MARGIN,
-      custom: false,
-    };
-  });
-
-  return next;
 }
